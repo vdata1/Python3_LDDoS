@@ -6,62 +6,54 @@ import org.apache.http.impl.bootstrap.ServerBootstrap;
 import org.apache.http.config.SocketConfig;
 import org.apache.http.protocol.HttpContext;
 import java.io.IOException;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 public class VulnerableJavaServer {
 
     public static void main(String[] args) throws Exception {
         
-        // 1. Force infinite socket read timeout and minimize the OS connection queue
+        // 1. Configure the transport layer behavior
         SocketConfig socketConfig = SocketConfig.custom()
-                .setSoTimeout(0)      // 0 = Infinite timeout. Server waits forever for partial data.
-                .setBacklogSize(1)    // Drops secondary connection requests instantly if the server is busy.
+                .setSoTimeout(0)      // 0 = Infinite timeout. Server sleeps indefinitely waiting for packet fragments.
+                .setBacklogSize(1)    // Drops secondary network handshakes at OS level if the socket is busy.
                 .build();
 
+        // 2. Build the server instance cleanly
         HttpServer server = ServerBootstrap.bootstrap()
                 .setListenerPort(8080)
-                .setLocalAddress(java.net.InetAddress.getByName("0.0.0.0")) // LAN binding
+                .setLocalAddress(java.net.InetAddress.getByName("0.0.0.0")) // Bind to LAN
                 .setSocketConfig(socketConfig)
                 
-                // 2. CRITICAL FOR LDDoS: Force a single-threaded execution pool.
-                // Without this, Apache will scale threads to handle simultaneous slow requests.
-                .setExecutorService(Executors.newSingleThreadExecutor())
-                
-                // 3. INTERCEPTOR LOGGING: Logs exactly when the server reads HTTP headers
+                // 3. INTERCEPTOR LOGGING: Intercepts and streams header bytes to stdout in real-time
                 .addInterceptorFirst(new HttpRequestInterceptor() {
                     @Override
                     public void process(HttpRequest request, HttpContext context) {
                         System.out.println("\n[LOG] ---> Incoming Request Headers Received!");
                         System.out.println("[LOG] Request Line: " + request.getRequestLine());
-                        // Print headers to show what the client sent
+                        
+                        // Enumerate and print incoming headers to reveal slow stream configurations
                         for (org.apache.http.Header header : request.getAllHeaders()) {
                             System.out.println("[LOG] Header -> " + header.getName() + ": " + header.getValue());
                         }
                     }
                 })
                 
-                // 4. EXCEPTION LOGGING: Captures dropped sockets or interrupted streams
-                .setExceptionLogger(new ExceptionLogger() {
-                    @Override
-                    public void log(Exception ex) {
-                        System.err.println("\n[SERVER EXCEPTION] " + ex.getClass().getSimpleName() + ": " + ex.getMessage());
-                    }
-                })
+                // CRITICAL FIX: Use the framework's built-in standard error logger 
+                // to eliminate version-specific signature errors.
+                .setExceptionLogger(ExceptionLogger.STD_ERR)
                 .create();
 
         System.out.println("=========================================================");
-        System.out.println("VULNERABLE JAVA LAB SERVER RUNNING");
+        System.out.println("VULNERABLE APACHE HTTPCORE SERVER ONLINE");
         System.out.println("Address: http://0.0.0");
-        System.out.println("Flaws: Single-Threaded, Infinite Timeout, Backlog = 1");
+        System.out.println("Status: Configured for low-rate testing environment");
         System.out.println("=========================================================");
         
         server.start();
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            System.out.println("\nShutting down Java server...");
+            System.out.println("\nGracefully terminating the server process...");
             server.shutdown(5, TimeUnit.SECONDS);
         }));
     }
 }
-
